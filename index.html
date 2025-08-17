@@ -27,7 +27,8 @@
     .player{background:rgba(255,255,255,0.02);padding:10px;border-radius:10px;width:320px;min-height:140px;display:flex;flex-direction:column;align-items:center;gap:8px;position:relative;}
     .player .player-name{font-weight:700;}
     .player .player-chips{font-size:13px;color:var(--muted);}
-    .player .player-hand{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;}
+    .player .player-hand{display:flex;gap:6px;flex-wrap:nowrap;justify-content:flex-start;align-items:center;}
+    .player .player-hand.scroll{overflow-x:auto;padding:6px 4px;}
     .small-hand .card{width:36px;height:52px;font-size:10px;}
     .center-area{display:flex;gap:12px;align-items:flex-start;justify-content:center;}
     .pile{background:rgba(255,255,255,0.01);padding:12px;border-radius:10px;min-width:360px;display:flex;flex-direction:column;align-items:center;gap:8px;}
@@ -51,6 +52,7 @@
       width:64px;height:90px;border-radius:8px;background:var(--card-bg);color:#042018;display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:700;
       box-shadow:0 6px 14px rgba(2,6,23,0.6);border:1px solid rgba(0,0,0,0.08);cursor:pointer;
       user-select:none;padding:6px;
+      flex: 0 0 auto;
     }
     .card .svg-wrap{width:100%;height:100%;display:flex;align-items:center;justify-content:center;border-radius:6px;overflow:hidden;}
     .card.dim{opacity:0.45}
@@ -59,6 +61,12 @@
     /* small cards */
     .small-hand .card{width:36px;height:52px;border-radius:6px;font-size:11px;padding:4px;}
     img.svg-wrap{display:block;border-radius:6px;}
+
+    /* Card back (for hiding AI cards) */
+    .card.back{background:linear-gradient(135deg,#1f2937,#111827);color:#e6eef6;border:1px solid rgba(255,255,255,0.04);}
+    .card.back .svg-wrap{display:flex;align-items:center;justify-content:center;}
+    .card-back-count{position:absolute;bottom:6px;right:8px;font-size:12px;color:#9fbec0;background:rgba(0,0,0,0.18);padding:2px 6px;border-radius:8px;}
+
     @media (max-width:900px){
       .player{width:220px}
       .table{padding:12px}
@@ -113,7 +121,7 @@
           <div class="player" id="player-0">
             <div class="player-name">나(사용자)</div>
             <div class="player-chips" id="player-0-chips"></div>
-            <div class="player-hand" id="player-hand"></div>
+            <div class="player-hand scroll" id="player-hand" style="min-height:100px;"></div>
             <div class="action-bar">
               <button id="play-btn">내기</button>
               <button id="pass-btn">패스</button>
@@ -144,16 +152,13 @@
   </div>
 
   <script>
-    // Single-file implementation that preserves all features:
-    // - AI count 2 or 3 (user chooses)
-    // - AI difficulty: beginner / intermediate / advanced
-    // - Deal rules: 3 players => 20 each, 4 players => 15 each
-    // - Start: player who holds sun(☀)-2 starts
-    // - All main poker-like hands supported: STRAIGHT_FLUSH, FOUR_OF_A_KIND, FULL_HOUSE, FLUSH, STRAIGHT, TRIPLE, PAIR, SINGLE
-    // - No "bomb" special override (different types do not automatically beat others)
-    // - Chip pool 60 distributed evenly at start; end-of-round payments: losers pay number of remaining cards; if a loser has any rank-2 among their remaining cards, their payment doubles (capped at their chips)
-    // - Card visuals use inline SVG images
-    // - UI, logs, autoplay for AIs, etc.
+    // Single-file implementation preserving original rules.
+    // Changes made per request:
+    // 1) Other AI's cards are no longer shown face-up to the player (a back is shown).
+    // 2) AI decision-making improved: AI uses cards already played to estimate how many potential beaters remain,
+    //    scores legal plays by reduction of hand, play strength and risk, and chooses the best play or decides to pass.
+    //    This behavior scales by difficulty (beginner/intermediate/advanced).
+    // 3) User hand UI tuned to be scrollable so player can see all cards at a glance.
 
     const SUITS = ['sun','moon','star','cloud'];
     const SUIT_SYMBOL = { sun:'☀', moon:'☾', star:'★', cloud:'☁' };
@@ -166,6 +171,9 @@
     let passCount = 0;
     let deck = [];
     const chipPool = 60;
+
+    // track cards that have been played to the center across the whole game (for AI inference)
+    let playedCards = [];
 
     let logEl, lastPlayEl, turnNameEl, playerHandEl, aiCountSelect, newGameBtn, playBtn, passBtn, aiDiffSelect;
 
@@ -192,6 +200,25 @@
       return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
     }
 
+    // card back svg
+    function svgForBack(small=false){
+      const w = small ? 72 : 140;
+      const h = small ? 96 : 200;
+      const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}' viewBox='0 0 ${w} ${h}'>
+        <defs>
+          <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
+            <stop offset="0" stop-color="#2b3948"/>
+            <stop offset="1" stop-color="#111827"/>
+          </linearGradient>
+        </defs>
+        <rect rx='8' ry='8' width='${w}' height='${h}' fill='url(#g)' stroke='#111' />
+        <g transform='translate(${w/2},${h/2})'>
+          <text x='0' y='12' font-size='28' text-anchor='middle' font-family='Arial' fill='#9fbec0'>LEXIO</text>
+        </g>
+      </svg>`;
+      return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+    }
+
     function cardElement(c, small=false){
       const wrapper = document.createElement('div');
       wrapper.className = 'card';
@@ -199,6 +226,19 @@
       wrapper.dataset.suit = c.suit; wrapper.dataset.rank = c.rank;
       const img = document.createElement('img');
       img.src = svgForCard(c, small); img.alt = `${c.suit}-${c.rank}`;
+      img.className = 'svg-wrap';
+      img.style.width = small ? '36px' : '100%';
+      img.style.height = small ? '48px' : '100%';
+      wrapper.appendChild(img);
+      return wrapper;
+    }
+
+    function cardBackElement(small=false){
+      const wrapper = document.createElement('div');
+      wrapper.className = 'card back';
+      if(small) wrapper.classList.add('small');
+      const img = document.createElement('img');
+      img.src = svgForBack(small); img.alt = `card-back`;
       img.className = 'svg-wrap';
       img.style.width = small ? '36px' : '100%';
       img.style.height = small ? '48px' : '100%';
@@ -305,17 +345,28 @@
         nameEl.textContent = players[i].name + (players[i].isAI ? ' (AI)' : '');
         chipsEl.textContent = `칩: ${players[i].chips}`;
         handEl.innerHTML = '';
+        // For the user (player 0) show full face-up hand and make it scrollable for at-a-glance viewing
         if(i===0){
+          handEl.classList.add('scroll');
           for(const c of players[i].hand){
             const ce = cardElement(c,false);
             ce.addEventListener('click', ()=> ce.classList.toggle('selected'));
             handEl.appendChild(ce);
           }
         } else {
+          // For AI players, do NOT reveal their cards: show card backs and also a small count badge
+          handEl.classList.remove('scroll');
           for(const c of players[i].hand){
-            const ce = cardElement(c,true);
+            const ce = cardBackElement(true);
             handEl.appendChild(ce);
           }
+          // Add a small count indicator so the player can see how many cards the AI has
+          const existingCount = el.querySelector('.card-back-count');
+          if(existingCount) existingCount.remove();
+          const countBadge = document.createElement('div');
+          countBadge.className = 'card-back-count';
+          countBadge.textContent = players[i].hand.length + '장';
+          el.appendChild(countBadge);
         }
       }
       lastPlayEl.innerHTML = '';
@@ -331,6 +382,15 @@
       turnNameEl.textContent = players[currentPlayer].name + (players[currentPlayer].isAI ? ' (AI)' : ' (당신)');
       document.getElementById('deck-count').textContent = deck.length;
       document.getElementById('chip-pool').textContent = chipPool;
+      // remove duplicate count badges for players without element
+      for(let i=0;i<4;i++){
+        const el = document.getElementById(`player-${i}`);
+        if(!el) continue;
+        if(i>=players.length){
+          const badge = el.querySelector('.card-back-count');
+          if(badge) badge.remove();
+        }
+      }
     }
 
     function getSelectedCards(){
@@ -345,6 +405,8 @@
       players[playerId].hand = removeCardsFromHand(players[playerId].hand, cards);
       lastPlay = { playerId, type: combo.type, cards: cards.map(cloneCard), len: combo.len, top: combo.top };
       passCount = 0;
+      // record played cards for AI inference
+      for(const c of cards) playedCards.push(cloneCard(c));
       log(`${players[playerId].name} 님이 ${combo.type}(${combo.len})를 냈습니다.`);
       renderAll();
       checkRoundEnd(playerId);
@@ -388,6 +450,7 @@
     function startNextRound(){
       for(const p of players) p.hand = [];
       lastPlay = null; passCount = 0;
+      playedCards = []; // reset history between rounds
       dealCards();
       currentPlayer = findSunTwoPlayerIndex();
       log('새 라운드 시작 (해 2 소지자가 시작).');
@@ -395,47 +458,172 @@
       if(players[currentPlayer].isAI) setTimeout(aiTakeTurn,700);
     }
 
-    // AI logic (beginner/intermediate/advanced)
+    // AI logic (beginner/intermediate/advanced) - improved using playedCards inference
     function aiTakeTurn(){
       if(!players[currentPlayer].isAI) return;
       const ai = players[currentPlayer];
       const level = ai.aiLevel;
       const legal = generateLegalPlays(ai.hand, lastPlay);
       if(legal.length===0){ commitPass(currentPlayer); return; }
-      let chosen = null;
-      if(level==='beginner'){
-        if(Math.random()<0.10){ commitPass(currentPlayer); return; }
-        chosen = legal[Math.floor(Math.random()*legal.length)];
-      } else if(level==='intermediate'){
-        legal.sort((a,b)=>{
-          const remainA = ai.hand.length - a.cards.length;
-          const remainB = ai.hand.length - b.cards.length;
-          if(remainA!==remainB) return remainA - remainB;
-          if(a.type===b.type){
-            if(a.top.rank!==b.top.rank) return a.top.rank - b.top.rank;
-            return SUIT_ORDER[a.top.suit] - SUIT_ORDER[b.top.suit];
+
+      // prepare unknown card pool = full deck - ai.hand - playedCards
+      const full = makeDeck();
+      const knownSet = new Set();
+      for(const c of players[currentPlayer].hand) knownSet.add(cardId(c));
+      for(const c of playedCards) knownSet.add(cardId(c));
+      const unknown = full.filter(c => !knownSet.has(cardId(c)));
+
+      // helper: estimate number of potential beaters remaining for a play using unknown cards
+      function estimateBeaters(play){
+        if(!play) return 999;
+        const type = play.type;
+        const len = play.len;
+        const top = play.top;
+        // create maps
+        const rankMap = {};
+        const suitMap = {};
+        for(const c of unknown){
+          (rankMap[c.rank] = rankMap[c.rank] || []).push(c);
+          (suitMap[c.suit] = suitMap[c.suit] || []).push(c);
+        }
+        let count = 0;
+        if(type === 'SINGLE'){
+          for(const c of unknown){
+            if(c.rank > top.rank) count++;
+            else if(c.rank === top.rank && SUIT_ORDER[c.suit] > SUIT_ORDER[top.suit]) count++;
           }
-          const pref = {'STRAIGHT_FLUSH':1,'FOUR_OF_A_KIND':2,'FULL_HOUSE':3,'FLUSH':4,'STRAIGHT':5,'TRIPLE':6,'PAIR':7,'SINGLE':8};
-          return pref[a.type]-pref[b.type];
-        });
-        chosen = legal[0];
-      } else {
-        if(Math.random()<0.08){ commitPass(currentPlayer); return; }
-        legal.sort((a,b)=>{
-          const score = (pl) => {
-            let s = pl.len*10;
-            if(pl.type==='STRAIGHT_FLUSH') s += 50;
-            if(pl.type==='FOUR_OF_A_KIND') s += 40;
-            if(pl.type==='FULL_HOUSE') s += 30;
-            if(pl.type==='FLUSH') s += 20;
-            if(pl.type==='STRAIGHT') s += 15;
-            s += pl.top.rank;
-            return -s;
-          };
-          return score(b)-score(a);
-        });
-        chosen = legal[0];
+          return count;
+        }
+        if(type === 'PAIR' || type === 'TRIPLE' || type === 'FOUR_OF_A_KIND'){
+          const need = (type==='PAIR'?2:(type==='TRIPLE'?3:4));
+          for(const r in rankMap){
+            const arr = rankMap[r];
+            if(arr.length >= need){
+              const rnum = parseInt(r,10);
+              if(rnum > top.rank) count += 1; // count possible beating rank (coarse)
+              else if(rnum === top.rank){
+                // check suit tiebreakers possibility by comparing highest suit among arr
+                const maxSuit = arr.map(x=>SUIT_ORDER[x.suit]).reduce((a,b)=>Math.max(a,b),0);
+                if(maxSuit > SUIT_ORDER[top.suit]) count += 1;
+              }
+            }
+          }
+          return count;
+        }
+        if(type === 'STRAIGHT' || type === 'STRAIGHT_FLUSH'){
+          // build unique ranks present and presence per suit
+          const ranksPresent = new Set(Object.keys(rankMap).map(x=>parseInt(x,10)));
+          const ranksArr = Array.from(ranksPresent).sort((a,b)=>a-b);
+          // check how many runs of length `len` exist in unknown
+          for(let i=0;i<ranksArr.length;i++){
+            let run=[ranksArr[i]];
+            for(let j=i+1;j<ranksArr.length;j++){
+              if(ranksArr[j] === ranksArr[j-1]+1) run.push(ranksArr[j]);
+              else break;
+              if(run.length === len){
+                // for STRAIGHT, any suit is fine
+                if(type === 'STRAIGHT'){
+                  const topRank = run[run.length-1];
+                  if(topRank > top.rank) count++;
+                } else {
+                  // STRAIGHT_FLUSH requires same suit across run
+                  for(const s of SUITS){
+                    const ok = run.every(rr => rankMap[rr] && rankMap[rr].some(cc=>cc.suit===s));
+                    if(ok){
+                      const topCard = rankMap[run[run.length-1]].find(cc=>cc.suit===s);
+                      if(topCard.rank > top.rank || (topCard.rank===top.rank && SUIT_ORDER[s] > SUIT_ORDER[top.suit])) count++;
+                    }
+                  }
+                }
+                // slide window to look for other runs; break to let outer loop advance
+              }
+            }
+          }
+          return count;
+        }
+        if(type === 'FLUSH'){
+          // any suit that has >=len cards remaining can form a flush
+          for(const s of SUITS){
+            const arr = suitMap[s] || [];
+            if(arr.length >= len){
+              // check if the highest flush possible beats the top
+              const sorted = arr.map(x=>x.rank).sort((a,b)=>a-b);
+              const possibleTop = sorted[sorted.length-1];
+              if(possibleTop > top.rank) count++;
+              else if(possibleTop === top.rank && SUIT_ORDER[s] > SUIT_ORDER[top.suit]) count++;
+            }
+          }
+          return count;
+        }
+        if(type === 'FULL_HOUSE'){
+          // look for any triple + pair combination in unknown with triple rank > top.rank OR equal with better suit
+          const triples = Object.keys(rankMap).filter(k=>rankMap[k].length>=3).map(x=>parseInt(x,10));
+          const pairs = Object.keys(rankMap).filter(k=>rankMap[k].length>=2).map(x=>parseInt(x,10));
+          for(const t of triples){
+            for(const p of pairs){
+              if(p===t) continue;
+              if(t > top.rank) count++;
+              else if(t === top.rank){
+                // check suit tiebreaker crudely by seeing if some triple has a suit with higher order than top.suit
+                const tcards = rankMap[t];
+                const maxSuit = tcards.map(x=>SUIT_ORDER[x.suit]).reduce((a,b)=>Math.max(a,b),0);
+                if(maxSuit > SUIT_ORDER[top.suit]) count++;
+              }
+            }
+          }
+          return count;
+        }
+        return count;
       }
+
+      // scoring weights for combination types (higher = more valuable)
+      const typeWeight = {'STRAIGHT_FLUSH':120,'FOUR_OF_A_KIND':110,'FULL_HOUSE':90,'FLUSH':80,'STRAIGHT':70,'TRIPLE':50,'PAIR':30,'SINGLE':10};
+
+      // Evaluate plays with a score: prefer reducing hand, stronger combos, higher top, and penalize many potential beaters.
+      function evaluatePlay(play){
+        const reduce = play.len; // how many cards removed
+        const strength = typeWeight[play.type] || 0;
+        const beaterCount = estimateBeaters(play);
+        // difficulty multipliers: how much the AI worries about beaters
+        const beaterMultiplier = (level==='beginner') ? 0.6 : (level==='intermediate' ? 1.0 : 1.8);
+        // advanced also values higher top ranks slightly more
+        const topVal = play.top.rank;
+        // base score: bigger is better
+        let score = reduce * 200 + strength + topVal * 2 - beaterCount * 80 * beaterMultiplier;
+        // penalize breaking strong combos in hand (simple heuristic): if play consumes some but leaves many isolated singles, penalize (coarse)
+        // crude heuristic: if AI will be left with many cards after play, small penalty handled by reduce factor already
+        return score;
+      }
+
+      // choose best by evaluation
+      let chosen = null;
+      if(level === 'beginner'){
+        // beginner: often random, but slightly favors plays that reduce hand
+        if(Math.random() < 0.18){ commitPass(currentPlayer); return; } // more likely to pass
+        legal.sort((a,b) => (b.len - a.len) || (b.top.rank - a.top.rank));
+        chosen = legal[Math.floor(Math.random() * Math.min(3, legal.length))]; // random among top few
+      } else if(level === 'intermediate'){
+        // intermediate: evaluate plays and choose best; will pass if best play is risky relative to remaining hand size
+        legal.sort((a,b) => evaluatePlay(b) - evaluatePlay(a));
+        const best = legal[0];
+        const score = evaluatePlay(best);
+        // decide to pass if score is low AND AI has many cards left
+        if(score < 150 && ai.hand.length > 6 && Math.random() < 0.6){ commitPass(currentPlayer); return; }
+        chosen = best;
+      } else {
+        // advanced: stronger evaluation, less likely to pass, deeper preference for strong combos
+        legal.sort((a,b) => evaluatePlay(b) - evaluatePlay(a));
+        const best = legal[0];
+        const second = legal[1] || null;
+        const score = evaluatePlay(best);
+        // advanced may consider opponents: if beaterCount is large and remaining hand small, may still play to dump
+        if(score < 120 && ai.hand.length > 8 && Math.random() < 0.35){ commitPass(currentPlayer); return; }
+        // if second is close and second reduces more cards, pick second sometimes
+        if(second && evaluatePlay(second) > score - 20 && second.len > best.len && Math.random() < 0.35){
+          chosen = second;
+        } else chosen = best;
+      }
+
       if(!chosen) commitPass(currentPlayer);
       else commitPlay(currentPlayer, chosen.cards.map(cloneCard), chosen);
     }
@@ -623,6 +811,7 @@
       dealCards();
       currentPlayer = findSunTwoPlayerIndex();
       lastPlay = null; passCount = 0;
+      playedCards = [];
       logEl.innerHTML = '';
       log('게임 시작! 해 2(☀-2) 보유자가 선공입니다.');
       // hide unused player placeholders
@@ -647,4 +836,4 @@
     function onPassClick(){ commitPass(currentPlayer); }
   </script>
 </body>
-</html>
+  </html>
