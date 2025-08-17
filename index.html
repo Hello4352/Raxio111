@@ -1,0 +1,650 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>렉시오 (LEXIO) — AI 대전</title>
+  <style>
+    :root{
+      --bg:#071022;
+      --panel:#0b1320;
+      --accent:#2dd4bf;
+      --muted:#94a3b8;
+      --card-bg:#ffffff;
+    }
+    *{box-sizing:border-box;font-family:Inter, "Noto Sans KR", system-ui, Arial;}
+    html,body,#app{height:100%;margin:0;background:linear-gradient(180deg,#071029, #071a29);color:#e6eef6;}
+    header{display:flex;align-items:center;justify-content:space-between;padding:16px 24px;border-bottom:1px solid rgba(255,255,255,0.03);}
+    h1{margin:0;font-size:18px;}
+    .controls{display:flex;gap:12px;align-items:center;}
+    .controls label{color:var(--muted);font-size:14px;}
+    .controls select{margin-left:6px;padding:6px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);background:rgba(255,255,255,0.02);color:#e6eef6;}
+    .controls button{padding:8px 12px;border-radius:8px;background:var(--accent);border:none;color:#042018;cursor:pointer;font-weight:600;}
+
+    main{padding:18px;display:flex;flex-direction:column;gap:12px;align-items:center;}
+    .table{width:100%;max-width:1100px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.02));padding:16px;border-radius:12px;display:flex;flex-direction:column;gap:12px;}
+    .player-row{display:flex;gap:12px;justify-content:center;}
+    .player{background:rgba(255,255,255,0.02);padding:10px;border-radius:10px;width:320px;min-height:140px;display:flex;flex-direction:column;align-items:center;gap:8px;position:relative;}
+    .player .player-name{font-weight:700;}
+    .player .player-chips{font-size:13px;color:var(--muted);}
+    .player .player-hand{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;}
+    .small-hand .card{width:36px;height:52px;font-size:10px;}
+    .center-area{display:flex;gap:12px;align-items:flex-start;justify-content:center;}
+    .pile{background:rgba(255,255,255,0.01);padding:12px;border-radius:10px;min-width:360px;display:flex;flex-direction:column;align-items:center;gap:8px;}
+    .pile .label{font-size:13px;color:var(--muted);}
+    .last-play{min-height:92px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:center;padding:6px;}
+    .turn-indicator{font-size:13px;color:var(--muted);}
+    .log{background:rgba(255,255,255,0.01);padding:8px;border-radius:8px;min-height:120px;width:360px;}
+    .log .label{font-size:13px;color:var(--muted);margin-bottom:6px;}
+    .log-entries{max-height:240px;overflow:auto;color:#cfeff0;font-size:13px;}
+
+    .player-row.bottom{justify-content:space-between;}
+    .action-bar{display:flex;gap:8px;margin-top:8px;}
+    .action-bar button{padding:8px 12px;border-radius:8px;border:none;background:#1f6feb;color:white;cursor:pointer;}
+    .action-bar button#pass-btn{background:#6b7280;}
+
+    .status{display:flex;gap:20px;color:var(--muted);font-size:14px;align-items:center;justify-content:center;padding:8px;}
+    footer{padding:12px;text-align:center;color:var(--muted);font-size:12px;}
+
+    /* Card visuals */
+    .card{
+      width:64px;height:90px;border-radius:8px;background:var(--card-bg);color:#042018;display:flex;flex-direction:column;align-items:center;justify-content:center;font-weight:700;
+      box-shadow:0 6px 14px rgba(2,6,23,0.6);border:1px solid rgba(0,0,0,0.08);cursor:pointer;
+      user-select:none;padding:6px;
+    }
+    .card .svg-wrap{width:100%;height:100%;display:flex;align-items:center;justify-content:center;border-radius:6px;overflow:hidden;}
+    .card.dim{opacity:0.45}
+    .card.selected{outline:3px solid rgba(45,212,191,0.18);transform:translateY(-6px);}
+
+    /* small cards */
+    .small-hand .card{width:36px;height:52px;border-radius:6px;font-size:11px;padding:4px;}
+    img.svg-wrap{display:block;border-radius:6px;}
+    @media (max-width:900px){
+      .player{width:220px}
+      .table{padding:12px}
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>렉시오 (LEXIO) — AI 대전</h1>
+      <div class="controls">
+        <label>AI 수(사용자 제외):
+          <select id="ai-count">
+            <option value="2">2 (총 3인)</option>
+            <option value="3">3 (총 4인)</option>
+          </select>
+        </label>
+        <label>AI 난이도:
+          <select id="ai-difficulty">
+            <option value="beginner">초급</option>
+            <option value="intermediate">중급</option>
+            <option value="advanced">고급</option>
+          </select>
+        </label>
+        <button id="new-game">새 게임 시작</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="table">
+        <div class="player-row top">
+          <div class="player" id="player-3">
+            <div class="player-name"></div>
+            <div class="player-chips"></div>
+            <div class="player-hand small-hand"></div>
+          </div>
+        </div>
+
+        <div class="center-area">
+          <div class="pile">
+            <div class="label">중앙(마지막 플레이)</div>
+            <div id="last-play" class="last-play"></div>
+            <div class="turn-indicator">턴: <span id="turn-name"></span></div>
+          </div>
+          <div class="log">
+            <div class="label">로그</div>
+            <div id="log-entries" class="log-entries"></div>
+          </div>
+        </div>
+
+        <div class="player-row bottom">
+          <div class="player" id="player-0">
+            <div class="player-name">나(사용자)</div>
+            <div class="player-chips" id="player-0-chips"></div>
+            <div class="player-hand" id="player-hand"></div>
+            <div class="action-bar">
+              <button id="play-btn">내기</button>
+              <button id="pass-btn">패스</button>
+            </div>
+          </div>
+          <div class="player" id="player-1">
+            <div class="player-name"></div>
+            <div class="player-chips"></div>
+            <div class="player-hand small-hand"></div>
+          </div>
+          <div class="player" id="player-2">
+            <div class="player-name"></div>
+            <div class="player-chips"></div>
+            <div class="player-hand small-hand"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="status">
+        <div>남은 덱: <span id="deck-count">0</span></div>
+        <div>칩 풀 (초기 총 60): <span id="chip-pool">60</span></div>
+      </section>
+    </main>
+
+    <footer>
+      <small>해(☀) = sun, 달(☾) = moon, 별(★) = star, 구름(☁) = cloud. 폭탄 규칙 비활성화. 패배자가 2를 보유하면 배상액 2배.</small>
+    </footer>
+  </div>
+
+  <script>
+    // Single-file implementation that preserves all features:
+    // - AI count 2 or 3 (user chooses)
+    // - AI difficulty: beginner / intermediate / advanced
+    // - Deal rules: 3 players => 20 each, 4 players => 15 each
+    // - Start: player who holds sun(☀)-2 starts
+    // - All main poker-like hands supported: STRAIGHT_FLUSH, FOUR_OF_A_KIND, FULL_HOUSE, FLUSH, STRAIGHT, TRIPLE, PAIR, SINGLE
+    // - No "bomb" special override (different types do not automatically beat others)
+    // - Chip pool 60 distributed evenly at start; end-of-round payments: losers pay number of remaining cards; if a loser has any rank-2 among their remaining cards, their payment doubles (capped at their chips)
+    // - Card visuals use inline SVG images
+    // - UI, logs, autoplay for AIs, etc.
+
+    const SUITS = ['sun','moon','star','cloud'];
+    const SUIT_SYMBOL = { sun:'☀', moon:'☾', star:'★', cloud:'☁' };
+    const SUIT_COLOR = { sun:'#ff8c42', moon:'#8fb7ff', star:'#ffd166', cloud:'#aab5c0' };
+    const SUIT_ORDER = { sun:4, moon:3, star:2, cloud:1 }; // tie-breaker
+    const RANK_MIN = 1, RANK_MAX = 15;
+    let players = [];
+    let currentPlayer = 0;
+    let lastPlay = null; // {playerId, type, cards, len, top}
+    let passCount = 0;
+    let deck = [];
+    const chipPool = 60;
+
+    let logEl, lastPlayEl, turnNameEl, playerHandEl, aiCountSelect, newGameBtn, playBtn, passBtn, aiDiffSelect;
+
+    // helpers
+    function shuffle(arr){ for(let i=arr.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]] } }
+    function cloneCard(c){ return {suit:c.suit, rank:c.rank}; }
+    function cardId(c){ return `${c.suit}-${c.rank}`; }
+    function makeDeck(){ const d=[]; for(const s of SUITS) for(let r=RANK_MIN;r<=RANK_MAX;r++) d.push({suit:s, rank:r}); return d; }
+
+    // SVG card generator (inline image)
+    function svgForCard(c, small=false){
+      const w = small ? 72 : 140;
+      const h = small ? 96 : 200;
+      const suit = SUIT_SYMBOL[c.suit];
+      const color = SUIT_COLOR[c.suit];
+      const rank = c.rank;
+      const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}' viewBox='0 0 ${w} ${h}'>
+        <rect rx='8' ry='8' width='${w}' height='${h}' fill='white' stroke='#ddd'/>
+        <text x='12' y='26' font-family='Arial' font-size='18' fill='${color}'>${suit} ${rank}</text>
+        <g transform='translate(${w/2},${h/2})'>
+          <text x='0' y='10' font-size='48' text-anchor='middle' font-family='Arial' fill='${color}'>${suit}</text>
+        </g>
+      </svg>`;
+      return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+    }
+
+    function cardElement(c, small=false){
+      const wrapper = document.createElement('div');
+      wrapper.className = 'card';
+      if(small) wrapper.classList.add('small');
+      wrapper.dataset.suit = c.suit; wrapper.dataset.rank = c.rank;
+      const img = document.createElement('img');
+      img.src = svgForCard(c, small); img.alt = `${c.suit}-${c.rank}`;
+      img.className = 'svg-wrap';
+      img.style.width = small ? '36px' : '100%';
+      img.style.height = small ? '48px' : '100%';
+      wrapper.appendChild(img);
+      return wrapper;
+    }
+
+    function log(msg){
+      const p = document.createElement('div'); p.textContent = msg; logEl.prepend(p);
+    }
+
+    // Combination analysis
+    // Types (strong to weak): STRAIGHT_FLUSH, FOUR_OF_A_KIND, FULL_HOUSE, FLUSH, STRAIGHT, TRIPLE, PAIR, SINGLE
+    function analyzeCombination(cards){
+      if(!cards || cards.length===0) return null;
+      const len = cards.length;
+      const sorted = [...cards].sort((a,b)=> a.rank===b.rank ? SUIT_ORDER[b.suit]-SUIT_ORDER[a.suit] : a.rank-b.rank);
+      const ranks = sorted.map(c=>c.rank);
+      const suits = sorted.map(c=>c.suit);
+      const uniqueRanks = [...new Set(ranks)];
+      const uniqueSuits = [...new Set(suits)];
+      // helper: is consecutive
+      let isConsec = true;
+      for(let i=1;i<ranks.length;i++) if(ranks[i] !== ranks[i-1]+1) { isConsec=false; break; }
+      // STRAIGHT_FLUSH: all same suit and consecutive and len >=3
+      if(uniqueSuits.length===1 && isConsec && len>=3){
+        return {type:'STRAIGHT_FLUSH', len, top:sorted[sorted.length-1]};
+      }
+      // FOUR_OF_A_KIND: len==4 and same rank
+      if(len===4 && uniqueRanks.length===1){
+        return {type:'FOUR_OF_A_KIND', len, top:sorted[sorted.length-1]};
+      }
+      // FULL_HOUSE: len==5 and ranks count 3+2
+      if(len===5){
+        const counts = {};
+        for(const r of ranks) counts[r] = (counts[r]||0)+1;
+        const vals = Object.values(counts).sort((a,b)=>b-a);
+        if(vals[0]===3 && vals[1]===2) {
+          const tripleRank = parseInt(Object.keys(counts).find(k=>counts[k]===3),10);
+          const tripleCards = cards.filter(c=>c.rank===tripleRank).sort((a,b)=>SUIT_ORDER[b.suit]-SUIT_ORDER[a.suit]);
+          return {type:'FULL_HOUSE', len, top: tripleCards[0]};
+        }
+      }
+      // FLUSH: same suit, len >=3
+      if(uniqueSuits.length===1 && len>=3){
+        return {type:'FLUSH', len, top: sorted[sorted.length-1]};
+      }
+      // STRAIGHT: consecutive len >=3
+      if(isConsec && len>=3){
+        return {type:'STRAIGHT', len, top: sorted[sorted.length-1]};
+      }
+      // TRIPLE
+      if(len===3 && uniqueRanks.length===1) return {type:'TRIPLE', len, top: sorted[sorted.length-1]};
+      // PAIR
+      if(len===2 && uniqueRanks.length===1) return {type:'PAIR', len:2, top: sorted[sorted.length-1]};
+      // SINGLE
+      if(len===1) return {type:'SINGLE', len:1, top: sorted[0]};
+      return null;
+    }
+
+    // beats: same type and same length required, then compare top.rank then suit order
+    function beats(play, last){
+      if(!play) return false;
+      if(!last) return true;
+      if(play.type !== last.type) return false;
+      if(play.len !== last.len) return false;
+      if(play.top.rank !== last.top.rank) return play.top.rank > last.top.rank;
+      return SUIT_ORDER[play.top.suit] > SUIT_ORDER[last.top.suit];
+    }
+
+    function removeCardsFromHand(hand, cards){
+      const ids = new Set(cards.map(cardId));
+      return hand.filter(c=>!ids.has(cardId(c)));
+    }
+
+    function findSunTwoPlayerIndex(){
+      for(let i=0;i<players.length;i++){
+        if(players[i].hand.some(c=>c.suit==='sun' && c.rank===2)) return i;
+      }
+      return 0;
+    }
+
+    function dealCards(){
+      deck = makeDeck(); shuffle(deck);
+      const per = (players.length===3) ? 20 : 15;
+      for(const p of players) p.hand = [];
+      for(let i=0;i<per;i++){
+        for(let pi=0;pi<players.length;pi++){
+          players[pi].hand.push(deck.pop());
+        }
+      }
+      for(const p of players){
+        p.hand.sort((a,b)=> a.rank===b.rank? SUIT_ORDER[b.suit]-SUIT_ORDER[a.suit] : a.rank-b.rank);
+      }
+    }
+
+    function renderAll(){
+      for(let i=0;i<players.length;i++){
+        const el = document.getElementById(`player-${i}`);
+        const nameEl = el.querySelector('.player-name');
+        const chipsEl = el.querySelector('.player-chips');
+        const handEl = el.querySelector('.player-hand');
+        if(!nameEl || !chipsEl || !handEl) continue;
+        nameEl.textContent = players[i].name + (players[i].isAI ? ' (AI)' : '');
+        chipsEl.textContent = `칩: ${players[i].chips}`;
+        handEl.innerHTML = '';
+        if(i===0){
+          for(const c of players[i].hand){
+            const ce = cardElement(c,false);
+            ce.addEventListener('click', ()=> ce.classList.toggle('selected'));
+            handEl.appendChild(ce);
+          }
+        } else {
+          for(const c of players[i].hand){
+            const ce = cardElement(c,true);
+            handEl.appendChild(ce);
+          }
+        }
+      }
+      lastPlayEl.innerHTML = '';
+      if(lastPlay && lastPlay.cards.length>0){
+        for(const c of lastPlay.cards){
+          lastPlayEl.appendChild(cardElement(c,true));
+        }
+        const meta = document.createElement('div');
+        meta.style.width='100%'; meta.style.textAlign='center'; meta.style.marginTop='6px'; meta.style.fontSize='13px'; meta.style.color='#9fbec0';
+        meta.textContent = `${lastPlay.type} (${lastPlay.len}) — ${players[lastPlay.playerId].name}`;
+        lastPlayEl.appendChild(meta);
+      }
+      turnNameEl.textContent = players[currentPlayer].name + (players[currentPlayer].isAI ? ' (AI)' : ' (당신)');
+      document.getElementById('deck-count').textContent = deck.length;
+      document.getElementById('chip-pool').textContent = chipPool;
+    }
+
+    function getSelectedCards(){
+      const handEl = document.getElementById('player-hand');
+      const selectedEls = handEl.querySelectorAll('.card.selected');
+      const res = [];
+      for(const el of selectedEls) res.push({suit: el.dataset.suit, rank: parseInt(el.dataset.rank,10)});
+      return res;
+    }
+
+    function commitPlay(playerId, cards, combo){
+      players[playerId].hand = removeCardsFromHand(players[playerId].hand, cards);
+      lastPlay = { playerId, type: combo.type, cards: cards.map(cloneCard), len: combo.len, top: combo.top };
+      passCount = 0;
+      log(`${players[playerId].name} 님이 ${combo.type}(${combo.len})를 냈습니다.`);
+      renderAll();
+      checkRoundEnd(playerId);
+      currentPlayer = (playerId + 1) % players.length;
+      if(players[currentPlayer].isAI) setTimeout(aiTakeTurn, 700);
+    }
+
+    function commitPass(playerId){
+      passCount++;
+      log(`${players[playerId].name} 님이 패스했습니다.`);
+      if(passCount >= players.length - 1){
+        log('모두 패스했습니다. 중앙 초기화. 현재 선수가 새로 시작합니다.');
+        lastPlay = null; passCount = 0;
+      }
+      currentPlayer = (playerId + 1) % players.length;
+      renderAll();
+      if(players[currentPlayer].isAI) setTimeout(aiTakeTurn, 700);
+    }
+
+    function checkRoundEnd(playedPlayerId){
+      if(players[playedPlayerId].hand.length===0){
+        log(`라운드 종료! 승자: ${players[playedPlayerId].name}`);
+        let totalGained = 0;
+        for(let i=0;i<players.length;i++){
+          if(i===playedPlayerId) continue;
+          const remain = players[i].hand.length;
+          if(remain<=0) continue;
+          let owe = remain;
+          if(players[i].hand.some(c=>c.rank===2)) owe *= 2;
+          const pay = Math.min(players[i].chips, owe);
+          players[i].chips -= pay;
+          players[playedPlayerId].chips += pay;
+          totalGained += pay;
+          log(`${players[i].name} → ${players[playedPlayerId].name}: ${pay}칩 (남은 카드 ${remain}${players[i].hand.some(c=>c.rank===2)?', 2 보유→2배':''})`);
+        }
+        log(`${players[playedPlayerId].name} 님이 총 ${totalGained}칩을 획득했습니다.`);
+        setTimeout(()=> startNextRound(), 1400);
+      }
+    }
+
+    function startNextRound(){
+      for(const p of players) p.hand = [];
+      lastPlay = null; passCount = 0;
+      dealCards();
+      currentPlayer = findSunTwoPlayerIndex();
+      log('새 라운드 시작 (해 2 소지자가 시작).');
+      renderAll();
+      if(players[currentPlayer].isAI) setTimeout(aiTakeTurn,700);
+    }
+
+    // AI logic (beginner/intermediate/advanced)
+    function aiTakeTurn(){
+      if(!players[currentPlayer].isAI) return;
+      const ai = players[currentPlayer];
+      const level = ai.aiLevel;
+      const legal = generateLegalPlays(ai.hand, lastPlay);
+      if(legal.length===0){ commitPass(currentPlayer); return; }
+      let chosen = null;
+      if(level==='beginner'){
+        if(Math.random()<0.10){ commitPass(currentPlayer); return; }
+        chosen = legal[Math.floor(Math.random()*legal.length)];
+      } else if(level==='intermediate'){
+        legal.sort((a,b)=>{
+          const remainA = ai.hand.length - a.cards.length;
+          const remainB = ai.hand.length - b.cards.length;
+          if(remainA!==remainB) return remainA - remainB;
+          if(a.type===b.type){
+            if(a.top.rank!==b.top.rank) return a.top.rank - b.top.rank;
+            return SUIT_ORDER[a.top.suit] - SUIT_ORDER[b.top.suit];
+          }
+          const pref = {'STRAIGHT_FLUSH':1,'FOUR_OF_A_KIND':2,'FULL_HOUSE':3,'FLUSH':4,'STRAIGHT':5,'TRIPLE':6,'PAIR':7,'SINGLE':8};
+          return pref[a.type]-pref[b.type];
+        });
+        chosen = legal[0];
+      } else {
+        if(Math.random()<0.08){ commitPass(currentPlayer); return; }
+        legal.sort((a,b)=>{
+          const score = (pl) => {
+            let s = pl.len*10;
+            if(pl.type==='STRAIGHT_FLUSH') s += 50;
+            if(pl.type==='FOUR_OF_A_KIND') s += 40;
+            if(pl.type==='FULL_HOUSE') s += 30;
+            if(pl.type==='FLUSH') s += 20;
+            if(pl.type==='STRAIGHT') s += 15;
+            s += pl.top.rank;
+            return -s;
+          };
+          return score(b)-score(a);
+        });
+        chosen = legal[0];
+      }
+      if(!chosen) commitPass(currentPlayer);
+      else commitPlay(currentPlayer, chosen.cards.map(cloneCard), chosen);
+    }
+
+    // generate legal plays (if last==null generate variety; if last exists, generate same type & len only)
+    function generateLegalPlays(hand, last){
+      const plays = [];
+      const pushIfBeats = (cards) => {
+        const combo = analyzeCombination(cards);
+        if(combo && beats(combo, last)) plays.push(comboWithCards(combo, cards));
+      };
+      if(last){
+        const type = last.type;
+        const len = last.len;
+        if(type==='SINGLE'){
+          for(const c of hand){ const combo = analyzeCombination([c]); if(beats(combo,last)) plays.push(comboWithCards(combo, [c])); }
+        } else if(type==='PAIR'){
+          const byRank={}; for(const c of hand) (byRank[c.rank]=byRank[c.rank]||[]).push(c);
+          for(const r in byRank) if(byRank[r].length>=2){
+            const cards = byRank[r].slice(0,2);
+            const combo = analyzeCombination(cards);
+            if(beats(combo,last)) plays.push(comboWithCards(combo,cards));
+          }
+        } else if(type==='TRIPLE'){
+          const byRank={}; for(const c of hand) (byRank[c.rank]=byRank[c.rank]||[]).push(c);
+          for(const r in byRank) if(byRank[r].length>=3){
+            const cards = byRank[r].slice(0,3);
+            const combo = analyzeCombination(cards);
+            if(beats(combo,last)) plays.push(comboWithCards(combo,cards));
+          }
+        } else if(type==='FOUR_OF_A_KIND'){
+          const byRank={}; for(const c of hand) (byRank[c.rank]=byRank[c.rank]||[]).push(c);
+          for(const r in byRank) if(byRank[r].length>=4){
+            const cards = byRank[r].slice(0,4);
+            const combo = analyzeCombination(cards);
+            if(beats(combo,last)) plays.push(comboWithCards(combo,cards));
+          }
+        } else if(type==='FULL_HOUSE'){
+          const byRank={}; for(const c of hand) (byRank[c.rank]=byRank[c.rank]||[]).push(c);
+          const triples = Object.keys(byRank).filter(k=>byRank[k].length>=3);
+          const pairs = Object.keys(byRank).filter(k=>byRank[k].length>=2);
+          for(const t of triples){
+            for(const p of pairs){
+              if(p===t) continue;
+              const cards = byRank[t].slice(0,3).concat(byRank[p].slice(0,2));
+              const combo = analyzeCombination(cards);
+              if(combo && beats(combo,last)) plays.push(comboWithCards(combo,cards));
+            }
+          }
+        } else if(type==='STRAIGHT' || type==='STRAIGHT_FLUSH'){
+          const rankMap = {};
+          for(const c of hand) (rankMap[c.rank]=rankMap[c.rank]||[]).push(c);
+          const ranks = Object.keys(rankMap).map(x=>parseInt(x,10)).sort((a,b)=>a-b);
+          for(let i=0;i<ranks.length;i++){
+            let run=[ranks[i]];
+            for(let j=i+1;j<ranks.length;j++){
+              if(ranks[j] === ranks[j-1]+1) run.push(ranks[j]);
+              else break;
+              if(run.length===len){
+                if(type==='STRAIGHT'){
+                  const cards = run.map(rr=>rankMap[rr][0]);
+                  const combo = analyzeCombination(cards);
+                  if(combo && beats(combo,last)) plays.push(comboWithCards(combo,cards));
+                } else {
+                  for(const s of SUITS){
+                    const ok = run.every(rr => rankMap[rr].some(cc=>cc.suit===s));
+                    if(!ok) continue;
+                    const cards = run.map(rr => rankMap[rr].find(cc=>cc.suit===s));
+                    const combo = analyzeCombination(cards);
+                    if(combo && beats(combo,last)) plays.push(comboWithCards(combo,cards));
+                  }
+                }
+              }
+            }
+          }
+        } else if(type==='FLUSH'){
+          const suitMap = {};
+          for(const c of hand) (suitMap[c.suit]=suitMap[c.suit]||[]).push(c);
+          for(const s of Object.keys(suitMap)){
+            if(suitMap[s].length>=len){
+              const arr = suitMap[s].slice().sort((a,b)=>a.rank-b.rank);
+              for(let i=0;i+len<=arr.length;i++){
+                const cards = arr.slice(i,i+len);
+                const combo = analyzeCombination(cards);
+                if(combo && beats(combo,last)) plays.push(comboWithCards(combo,cards));
+              }
+            }
+          }
+        }
+        const unique = {};
+        return plays.filter(p=>{ const key = p.cards.map(cardId).sort().join(','); if(unique[key]) return false; unique[key]=true; return true; });
+      }
+
+      // last == null: generate many possible open plays
+      for(const c of hand) pushIfBeats([c]);
+      const byRank = {};
+      for(const c of hand) (byRank[c.rank]=byRank[c.rank]||[]).push(c);
+      for(const r in byRank){
+        if(byRank[r].length>=2) pushIfBeats(byRank[r].slice(0,2));
+        if(byRank[r].length>=3) pushIfBeats(byRank[r].slice(0,3));
+        if(byRank[r].length>=4) pushIfBeats(byRank[r].slice(0,4));
+      }
+      const rankMap = {};
+      for(const c of hand) (rankMap[c.rank]=rankMap[c.rank]||[]).push(c);
+      const ranks = Object.keys(rankMap).map(x=>parseInt(x,10)).sort((a,b)=>a-b);
+      for(let i=0;i<ranks.length;i++){
+        let run=[ranks[i]];
+        for(let j=i+1;j<ranks.length;j++){
+          if(ranks[j]===ranks[j-1]+1) run.push(ranks[j]);
+          else break;
+          if(run.length>=3){
+            const cards = run.map(rr=>rankMap[rr][0]);
+            pushIfBeats(cards);
+          }
+        }
+      }
+      const suitMap={};
+      for(const c of hand) (suitMap[c.suit]=suitMap[c.suit]||[]).push(c);
+      for(const s of Object.keys(suitMap)){
+        const arr = suitMap[s].slice().sort((a,b)=>a.rank-b.rank);
+        for(let L=3; L<=arr.length; L++){
+          for(let i=0;i+L<=arr.length;i++){
+            const cards = arr.slice(i,i+L);
+            pushIfBeats(cards);
+          }
+        }
+      }
+      const triples = Object.keys(byRank).filter(k=>byRank[k].length>=3);
+      const pairs = Object.keys(byRank).filter(k=>byRank[k].length>=2);
+      for(const t of triples) for(const p of pairs){
+        if(p===t) continue;
+        pushIfBeats(byRank[t].slice(0,3).concat(byRank[p].slice(0,2)));
+      }
+      for(const s of SUITS){
+        const arr = (suitMap[s]||[]).slice().sort((a,b)=>a.rank-b.rank);
+        const ranksS = arr.map(c=>c.rank);
+        for(let i=0;i<ranksS.length;i++){
+          let run=[ranksS[i]];
+          for(let j=i+1;j<ranksS.length;j++){
+            if(ranksS[j]===ranksS[j-1]+1) run.push(ranksS[j]);
+            else break;
+            if(run.length>=3){
+              const cards = run.map(rr => arr.find(cc=>cc.rank===rr && cc.suit===s));
+              pushIfBeats(cards);
+            }
+          }
+        }
+      }
+      const uniq={};
+      return plays.filter(p=>{ const key = p.cards.map(cardId).sort().join(','); if(uniq[key]) return false; uniq[key]=true; return true; });
+    }
+
+    function comboWithCards(combo, cards){ return {type:combo.type, len:combo.len, top:combo.top, cards:cards.map(cloneCard)}; }
+
+    // Events & setup
+    window.addEventListener('DOMContentLoaded', ()=>{
+      logEl = document.getElementById('log-entries');
+      lastPlayEl = document.getElementById('last-play');
+      turnNameEl = document.getElementById('turn-name');
+      playerHandEl = document.getElementById('player-hand');
+      aiCountSelect = document.getElementById('ai-count');
+      aiDiffSelect = document.getElementById('ai-difficulty');
+      newGameBtn = document.getElementById('new-game');
+      playBtn = document.getElementById('play-btn');
+      passBtn = document.getElementById('pass-btn');
+
+      newGameBtn.addEventListener('click', ()=> startGame(parseInt(aiCountSelect.value,10), aiDiffSelect.value));
+      playBtn.addEventListener('click', onPlayClick);
+      passBtn.addEventListener('click', onPassClick);
+
+      startGame(parseInt(aiCountSelect.value,10), aiDiffSelect.value);
+    });
+
+    function startGame(aiCount, aiLevel){
+      players = [];
+      const totalPlayers = 1 + aiCount;
+      const base = Math.floor(chipPool / totalPlayers);
+      for(let i=0;i<totalPlayers;i++){
+        if(i===0) players.push({id:0, name:'나(사용자)', isAI:false, aiLevel:null, hand:[], chips:base});
+        else players.push({id:i, name:`AI ${i}`, isAI:true, aiLevel:aiLevel, hand:[], chips:base});
+      }
+      let sum = players.reduce((s,p)=>s+p.chips,0);
+      if(sum < chipPool) players[0].chips += (chipPool - sum);
+
+      dealCards();
+      currentPlayer = findSunTwoPlayerIndex();
+      lastPlay = null; passCount = 0;
+      logEl.innerHTML = '';
+      log('게임 시작! 해 2(☀-2) 보유자가 선공입니다.');
+      // hide unused player placeholders
+      for(let i=0;i<4;i++){
+        const el = document.getElementById(`player-${i}`);
+        if(!el) continue;
+        if(i<players.length) el.style.display='flex'; else el.style.display='none';
+      }
+      renderAll();
+      if(players[currentPlayer].isAI) setTimeout(aiTakeTurn,800);
+    }
+
+    function onPlayClick(){
+      const selected = getSelectedCards();
+      if(selected.length===0){ alert('한 장 이상 선택하세요.'); return; }
+      const combo = analyzeCombination(selected);
+      if(!combo){ alert('유효한 족보가 아닙니다.'); return; }
+      if(!beats(combo, lastPlay)){ alert('중앙에 놓인 족보를 이기지 못합니다.'); return; }
+      commitPlay(currentPlayer, selected, combo);
+    }
+
+    function onPassClick(){ commitPass(currentPlayer); }
+  </script>
+</body>
+</html>
